@@ -67,19 +67,27 @@ def chunk_jd_text(jd_text: str) -> list[str]:
     """
     Split job description text into chunks, one per requirement/bullet.
 
-    Unlike resumes, JD chunks are required to have started with a bullet
-    marker. Real job postings almost always list actual requirements as
-    bullets, while the surrounding "why work here" marketing paragraphs
-    and job titles are plain prose - so this filters out exactly that
-    noise. The tradeoff: a JD that states a real requirement as a plain
-    sentence with no bullet would get dropped here. We're accepting that
-    tradeoff because bulleted requirements are the overwhelmingly common
-    case, and dropping a few noise paragraphs matters more for match
-    quality than catching every possible plain-sentence requirement.
+    We first try requiring a bullet marker, since real job postings almost
+    always list actual requirements as bullets while surrounding "why work
+    here" marketing paragraphs and job titles are plain prose - this was
+    confirmed on a real JD in testing, where it correctly dropped title/
+    marketing lines that would otherwise have polluted matching.
+
+    However, pasted JD text doesn't always keep its bullet characters -
+    copying from a browser can lose them, leaving plain lines with real
+    requirement content but no bullet marker at all. If bullet-filtering
+    would leave us with zero chunks, that's a sign this particular JD
+    doesn't use bullets we can detect, so we fall back to length-only
+    filtering (same rule as resumes) rather than returning nothing.
     """
     lines_with_bullets = _split_into_lines_with_bullet_info(jd_text)
-    return [
+
+    bulleted_chunks = [
         line
         for line, had_bullet in lines_with_bullets
         if had_bullet and _is_meaningful(line)
     ]
+    if bulleted_chunks:
+        return bulleted_chunks
+
+    return [line for line, _ in lines_with_bullets if _is_meaningful(line)]
