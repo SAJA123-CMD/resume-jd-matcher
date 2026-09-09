@@ -141,7 +141,9 @@ def match_resume_to_jd(request: MatchRequest):
     # Only the gaps need an LLM call - matched requirements already have
     # their resume evidence, which is explanation enough.
     for gap in gaps:
-        gap["explanation"] = explain_gap(gap["jd_requirement"])
+        gap["explanation"] = explain_gap(
+            gap["jd_requirement"], gap["best_match"], gap["score"]
+        )
         logger.info("  gap: '%s' -> %s", gap["jd_requirement"], gap["explanation"])
 
     overall_match_percent = round(100 * len(matched) / len(jd_chunks))

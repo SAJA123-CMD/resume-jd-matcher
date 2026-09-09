@@ -50,7 +50,7 @@ def main():
 
     print(f"--- GAPS ({len(gaps)}) - asking Ollama to explain each one ---\n")
     for gap in gaps:
-        explanation = explain_gap(gap["jd_requirement"])
+        explanation = explain_gap(gap["jd_requirement"], gap["best_match"], gap["score"])
         print(f"[{gap['score']}] {gap['jd_requirement']}")
         print(f"    Gap: {explanation}\n")
 
