@@ -17,56 +17,69 @@ import re
 # number after looking at real chunk output.
 MIN_CHUNK_LENGTH = 15
 
-# Matches common bullet markers at the start of a line (-, *, •, or "1.",
-# "2)" etc.) so we can strip them before treating the rest as the chunk.
-BULLET_PREFIX_PATTERN = re.compile(r"^[\-\*•]\s*|^\d+[\.\)]\s*")
+# Matches common bullet markers at the start of a line: -, *, •, ⦁ (used by
+# some job sites/Word exports), or numbered lists like "1." / "2)".
+BULLET_PREFIX_PATTERN = re.compile(r"^[\-\*•⦁]\s*|^\d+[\.\)]\s*")
 
 
-def _split_into_candidate_lines(text: str) -> list[str]:
+def _split_into_lines_with_bullet_info(text: str) -> list[tuple[str, bool]]:
     """
-    Break raw text into individual lines and strip bullet markers/whitespace.
+    Break raw text into lines, stripping bullet markers, and record
+    whether each line originally had a bullet marker.
 
-    This is the same first step for both resumes and JDs - both are
-    naturally bullet-heavy documents, so line-by-line splitting works for
-    either one.
+    We need to know "had a bullet" separately from the cleaned text
+    because JD chunking uses it as a filter (see chunk_jd_text) - a real
+    job requirement is almost always bulleted, while marketing/overview
+    prose in a job posting usually isn't.
     """
     raw_lines = text.split("\n")
-    cleaned_lines = []
+    result = []
     for line in raw_lines:
-        without_bullet = BULLET_PREFIX_PATTERN.sub("", line.strip())
-        cleaned_lines.append(without_bullet.strip())
-    return cleaned_lines
+        stripped = line.strip()
+        had_bullet = bool(BULLET_PREFIX_PATTERN.match(stripped))
+        without_bullet = BULLET_PREFIX_PATTERN.sub("", stripped).strip()
+        result.append((without_bullet, had_bullet))
+    return result
 
 
-def _filter_meaningful_lines(lines: list[str]) -> list[str]:
+def _is_meaningful(line: str) -> bool:
     """
-    Drop lines that are too short to be a real, matchable statement.
-
-    We deliberately leave these out of the embedding step entirely, rather
-    than embedding everything - a section header like "SKILLS" has no
-    real meaning to compare against a JD requirement, and would just add
-    noise (or worse, accidentally "win" as a best-match by chance).
+    A line is "meaningful" if it's long enough to be a real statement,
+    rather than a section header, stray date, or contact info fragment.
     """
-    return [line for line in lines if len(line) >= MIN_CHUNK_LENGTH]
+    return len(line) >= MIN_CHUNK_LENGTH
 
 
 def chunk_resume_text(resume_text: str) -> list[str]:
     """
     Split resume text into chunks, one per bullet/line of real content.
+
+    Resumes are filtered by length only (not bullet presence) because
+    resume formatting is inconsistent - plenty of real, valuable lines
+    ("Led a team of 5 engineers...") appear with no bullet marker at all,
+    e.g. under a job title as plain lines.
     """
-    lines = _split_into_candidate_lines(resume_text)
-    return _filter_meaningful_lines(lines)
+    lines_with_bullets = _split_into_lines_with_bullet_info(resume_text)
+    return [line for line, _ in lines_with_bullets if _is_meaningful(line)]
 
 
 def chunk_jd_text(jd_text: str) -> list[str]:
     """
     Split job description text into chunks, one per requirement/bullet.
 
-    Uses the same logic as resume chunking for now. JDs also tend to have
-    boilerplate lines ("Job Type: Full-time", EEO statements) that are
-    short enough to get filtered out naturally, but we may need smarter
-    filtering here once we test on real, messy job postings scraped from
-    URLs in a later phase.
+    Unlike resumes, JD chunks are required to have started with a bullet
+    marker. Real job postings almost always list actual requirements as
+    bullets, while the surrounding "why work here" marketing paragraphs
+    and job titles are plain prose - so this filters out exactly that
+    noise. The tradeoff: a JD that states a real requirement as a plain
+    sentence with no bullet would get dropped here. We're accepting that
+    tradeoff because bulleted requirements are the overwhelmingly common
+    case, and dropping a few noise paragraphs matters more for match
+    quality than catching every possible plain-sentence requirement.
     """
-    lines = _split_into_candidate_lines(jd_text)
-    return _filter_meaningful_lines(lines)
+    lines_with_bullets = _split_into_lines_with_bullet_info(jd_text)
+    return [
+        line
+        for line, had_bullet in lines_with_bullets
+        if had_bullet and _is_meaningful(line)
+    ]
