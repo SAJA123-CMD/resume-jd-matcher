@@ -14,6 +14,7 @@ from pydantic import BaseModel
 
 from app.extraction import extract_text
 from app.chunking import chunk_resume_text, chunk_jd_text
+from app.matching import find_best_matches
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -101,3 +102,35 @@ def chunk_text(request: ChunkRequest):
         logger.info("  [%d] %s", index, chunk)
 
     return {"chunk_count": len(chunks), "chunks": chunks}
+
+
+class MatchRequest(BaseModel):
+    resume_text: str
+    jd_text: str
+
+
+@app.post("/match")
+def match_resume_to_jd(request: MatchRequest):
+    """
+    Phase 3 test endpoint: chunk both texts, embed them, and return each
+    JD requirement paired with its best-matching resume chunk and score.
+
+    This doesn't do gap analysis yet (that's Phase 4) - it just returns
+    the raw matching results so we can sanity-check by eye whether high
+    -scoring pairs actually look related to a human reader.
+    """
+    resume_chunks = chunk_resume_text(request.resume_text)
+    jd_chunks = chunk_jd_text(request.jd_text)
+
+    if not resume_chunks:
+        raise HTTPException(status_code=400, detail="No resume chunks found.")
+    if not jd_chunks:
+        raise HTTPException(status_code=400, detail="No JD chunks found.")
+
+    matches = find_best_matches(resume_chunks, jd_chunks)
+
+    logger.info("Matched %d JD requirements against %d resume chunks", len(jd_chunks), len(resume_chunks))
+    for match in matches:
+        logger.info("  score=%s | jd='%s' | resume='%s'", match["score"], match["jd_requirement"], match["best_match"])
+
+    return {"matches": matches}
