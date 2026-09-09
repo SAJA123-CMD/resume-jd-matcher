@@ -14,7 +14,8 @@ from pydantic import BaseModel
 
 from app.extraction import extract_text
 from app.chunking import chunk_resume_text, chunk_jd_text
-from app.matching import find_best_matches
+from app.matching import find_best_matches, split_matches_and_gaps
+from app.gap_analysis import explain_gap
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -112,12 +113,15 @@ class MatchRequest(BaseModel):
 @app.post("/match")
 def match_resume_to_jd(request: MatchRequest):
     """
-    Phase 3 test endpoint: chunk both texts, embed them, and return each
-    JD requirement paired with its best-matching resume chunk and score.
+    The full pipeline in one call: chunk both texts, embed them, find the
+    best resume match for every JD requirement, split results into solid
+    matches vs. gaps by score, and ask the local Ollama LLM to explain
+    each gap in one sentence.
 
-    This doesn't do gap analysis yet (that's Phase 4) - it just returns
-    the raw matching results so we can sanity-check by eye whether high
-    -scoring pairs actually look related to a human reader.
+    Returns everything the frontend needs to render all three result
+    sections: overall match %, the matched list (with resume evidence),
+    and the gaps list (with a plain-English explanation of what's likely
+    missing).
     """
     resume_chunks = chunk_resume_text(request.resume_text)
     jd_chunks = chunk_jd_text(request.jd_text)
@@ -128,9 +132,22 @@ def match_resume_to_jd(request: MatchRequest):
         raise HTTPException(status_code=400, detail="No JD chunks found.")
 
     matches = find_best_matches(resume_chunks, jd_chunks)
+    matched, gaps = split_matches_and_gaps(matches)
 
-    logger.info("Matched %d JD requirements against %d resume chunks", len(jd_chunks), len(resume_chunks))
-    for match in matches:
-        logger.info("  score=%s | jd='%s' | resume='%s'", match["score"], match["jd_requirement"], match["best_match"])
+    logger.info(
+        "Matched %d/%d JD requirements (%d gaps)", len(matched), len(jd_chunks), len(gaps)
+    )
 
-    return {"matches": matches}
+    # Only the gaps need an LLM call - matched requirements already have
+    # their resume evidence, which is explanation enough.
+    for gap in gaps:
+        gap["explanation"] = explain_gap(gap["jd_requirement"])
+        logger.info("  gap: '%s' -> %s", gap["jd_requirement"], gap["explanation"])
+
+    overall_match_percent = round(100 * len(matched) / len(jd_chunks))
+
+    return {
+        "overall_match_percent": overall_match_percent,
+        "matched": matched,
+        "gaps": gaps,
+    }

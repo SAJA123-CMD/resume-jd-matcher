@@ -21,6 +21,18 @@ range 0 (unrelated meaning) to 1 (near-identical meaning).
 
 from sentence_transformers import SentenceTransformer, util
 
+# JD requirements whose best resume match scores below this are treated
+# as "gaps" needing an LLM explanation (Phase 4), rather than a genuine
+# match. Chosen empirically from real test runs: on all-MiniLM-L6-v2,
+# short technical bullet points tend to score lower overall than full
+# natural-language sentences would (even a strong match often lands
+# around 0.5-0.6 rather than 0.8-0.9), so 0.45 was picked to catch clearly
+# weak matches (visa boilerplate, "collaborative spirit") without
+# flagging reasonable-if-imperfect matches as gaps. This is a starting
+# point, not a precise science - if real test runs show it's too
+# aggressive or too lax, adjust this one number.
+GAP_THRESHOLD = 0.45
+
 # Loading the model reads ~80MB of weights from disk (downloaded once,
 # the first time this runs, and cached locally after that - no API key,
 # no network call on later runs). We load it once at import time rather
@@ -81,3 +93,16 @@ def find_best_matches(resume_chunks: list[str], jd_chunks: list[str]) -> list[di
         )
 
     return results
+
+
+def split_matches_and_gaps(matches: list[dict]) -> tuple[list[dict], list[dict]]:
+    """
+    Split match results into "matched" (score >= GAP_THRESHOLD) and
+    "gaps" (score below it), based purely on the threshold above.
+
+    Kept separate from find_best_matches so the threshold logic is easy
+    to find/change independently of the similarity computation itself.
+    """
+    matched = [m for m in matches if m["score"] >= GAP_THRESHOLD]
+    gaps = [m for m in matches if m["score"] < GAP_THRESHOLD]
+    return matched, gaps
