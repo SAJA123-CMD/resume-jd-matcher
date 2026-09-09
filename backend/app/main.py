@@ -6,10 +6,17 @@ returns the raw extracted text, so we can manually sanity-check parsing
 quality before building chunking/embedding/matching on top of it.
 """
 
+import logging
+
 from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
 
 from app.extraction import extract_text
+from app.chunking import chunk_resume_text, chunk_jd_text
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 app = FastAPI(title="Resume <-> JD Semantic Matcher")
 
@@ -65,3 +72,32 @@ async def extract_resume_text(file: UploadFile = File(...)):
         "character_count": len(text),
         "text": text,
     }
+
+
+class ChunkRequest(BaseModel):
+    text: str
+    kind: str  # "resume" or "jd" - determines which chunking rules to apply
+
+
+@app.post("/chunk")
+def chunk_text(request: ChunkRequest):
+    """
+    Phase 2 test endpoint: split raw text into chunks and return them.
+
+    This exists purely so we can manually sanity-check the chunking logic
+    on real resume/JD text before wiring embeddings on top of it. The
+    chunks are also logged server-side so you can see them in the
+    terminal running uvicorn, not just in the JSON response.
+    """
+    if request.kind == "resume":
+        chunks = chunk_resume_text(request.text)
+    elif request.kind == "jd":
+        chunks = chunk_jd_text(request.text)
+    else:
+        raise HTTPException(status_code=400, detail="kind must be 'resume' or 'jd'")
+
+    logger.info("Chunked %s text into %d chunks:", request.kind, len(chunks))
+    for index, chunk in enumerate(chunks):
+        logger.info("  [%d] %s", index, chunk)
+
+    return {"chunk_count": len(chunks), "chunks": chunks}
