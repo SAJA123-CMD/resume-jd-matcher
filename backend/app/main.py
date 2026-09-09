@@ -8,6 +8,7 @@ quality before building chunking/embedding/matching on top of it.
 
 import logging
 
+import requests
 from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -16,6 +17,7 @@ from app.extraction import extract_text
 from app.chunking import chunk_resume_text, chunk_jd_text
 from app.matching import find_best_matches, split_matches_and_gaps
 from app.gap_analysis import explain_gap
+from app.jd_fetcher import fetch_jd_text_from_url
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -74,6 +76,38 @@ async def extract_resume_text(file: UploadFile = File(...)):
         "character_count": len(text),
         "text": text,
     }
+
+
+class FetchJdUrlRequest(BaseModel):
+    url: str
+
+
+@app.post("/fetch-jd-url")
+def fetch_jd_url(request: FetchJdUrlRequest):
+    """
+    Best-effort fetch of a job posting's visible text from a URL.
+
+    Job sites vary hugely in HTML structure, and some block scripted
+    requests or render content via JavaScript we can't execute here - so
+    this can fail or return messy text. That's why the frontend always
+    offers a "paste text instead" fallback: this endpoint is a
+    convenience, not something the app depends on working every time.
+    """
+    try:
+        text = fetch_jd_text_from_url(request.url)
+    except requests.RequestException as error:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Could not fetch that URL: {error}. Try pasting the JD text instead.",
+        )
+
+    if not text.strip():
+        raise HTTPException(
+            status_code=422,
+            detail="No text could be extracted from that page. Try pasting the JD text instead.",
+        )
+
+    return {"text": text}
 
 
 class ChunkRequest(BaseModel):
